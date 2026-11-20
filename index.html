@@ -150,6 +150,10 @@
           <button id="sound-toggle-btn" onclick="toggleSound()" class="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 flex items-center justify-center text-slate-600 transition" aria-label="効果音切替">
             <i id="sound-icon" class="fa-solid fa-volume-high text-sm"></i>
           </button>
+          <!-- AI APIキー設定ボタン（GitHub Pages / Androidアプリ用） -->
+          <button id="api-key-btn" onclick="openApiKeyModal()" class="w-9 h-9 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 active:scale-95 flex items-center justify-center text-amber-600 transition" title="AI画像生成のAPIキー設定" aria-label="AI APIキー設定">
+            <i class="fa-solid fa-key text-xs"></i>
+          </button>
           <!-- ホーム画面インストールボタン -->
           <button id="install-app-btn" onclick="handleInstallAppClick()" class="px-2.5 h-9 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 active:scale-95 flex items-center gap-1.5 text-indigo-700 font-extrabold text-xs transition" aria-label="アプリをインストール">
             <i class="fa-solid fa-download text-xs"></i>
@@ -299,6 +303,49 @@
       <button onclick="closeInstallModal()" class="mt-4 w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition">
         閉じる
       </button>
+    </div>
+  </div>
+
+  <!-- ==================== Gemini APIキー設定モーダル（GitHub Pages / Android用） ==================== -->
+  <div id="api-key-modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-100 animate-pop">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="w-8 h-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center text-sm">
+            <i class="fa-solid fa-key"></i>
+          </span>
+          <h3 class="text-base sm:text-lg font-black text-slate-900">AI画像生成 APIキー設定</h3>
+        </div>
+        <button onclick="closeApiKeyModal()" class="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <p class="text-xs text-slate-600 leading-relaxed mb-3">
+        GitHub Pages や Androidアプリ単体で「AIで情景イラストを生成」機能を使うには、<strong>Google AI Studio（無料）</strong> で発行した Gemini APIキーを入力してください（端末内にのみ安全に保存されます）。
+      </p>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-extrabold text-slate-700 mb-1">Gemini API キー</label>
+          <input type="password" id="gemini-api-key-input" placeholder="AIzaSy..." class="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white outline-none text-xs font-mono text-slate-900">
+        </div>
+
+        <div class="bg-indigo-50/80 border border-indigo-100 rounded-2xl p-3 text-[11px] text-indigo-900 space-y-1">
+          <p class="font-extrabold">📌 無料APIキーの取得方法（約1分）：</p>
+          <p>1. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="underline font-bold text-indigo-700">Google AI Studio</a> にGoogleアカウントでログイン</p>
+          <p>2. 「APIキーを作成（Create API key）」を押してコピーし、上の欄に貼り付けて保存します。</p>
+        </div>
+
+        <div class="flex gap-2 pt-1">
+          <button type="button" onclick="clearGeminiApiKey()" class="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition">
+            削除
+          </button>
+          <button type="button" onclick="saveGeminiApiKey()" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-700 hover:to-cyan-700 text-white font-extrabold text-xs shadow-md transition">
+            保存してAI画像生成を有効化
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2010,7 +2057,7 @@
       const prompt = `A realistic, cinematic editorial photograph (NO text, NO letters, NO watermarks) depicting a real-life everyday scene that clearly conveys the meaning of "${item.word}" (${item.meaning}) and this memory concept: "${item.coreImage}". Natural daylight, rich textures, realistic depth of field, high-resolution educational photography.`;
 
       try {
-        const apiKey = "";
+        const apiKey = (appState.geminiApiKey || "").trim();
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent?key=${apiKey}`;
         const payload = {
           contents: [{ parts: [{ text: prompt }] }],
@@ -2044,11 +2091,47 @@
         }
       } catch (err) {
         if (!isSilent) {
-          showToast("AI画像生成に接続できなかったため、専用シーンイラストを表示しています");
+          if (!appState.geminiApiKey) {
+            showToast("🔑 右上の鍵アイコンから無料のGemini APIキーを設定するとAI画像生成が使えます！");
+            openApiKeyModal();
+          } else {
+            showToast("AI画像生成に接続できませんでした。APIキーや通信環境を確認してください。");
+          }
         }
       } finally {
         if (loadingEl) loadingEl.classList.add("hidden");
       }
+    }
+
+    function openApiKeyModal() {
+      playSoundEffect("tap");
+      const input = document.getElementById("gemini-api-key-input");
+      if (input) input.value = appState.geminiApiKey || "";
+      document.getElementById("api-key-modal").classList.remove("hidden");
+    }
+
+    function closeApiKeyModal() {
+      playSoundEffect("tap");
+      document.getElementById("api-key-modal").classList.add("hidden");
+    }
+
+    function saveGeminiApiKey() {
+      const val = (document.getElementById("gemini-api-key-input").value || "").trim();
+      appState.geminiApiKey = val;
+      saveState();
+      closeApiKeyModal();
+      playSoundEffect("correct");
+      showToast(val ? "✅ APIキーを保存しました！AI情景イラストを生成します" : "APIキーをクリアしました");
+      if (val) {
+        generateAIImageForCurrentVocab(false);
+      }
+    }
+
+    function clearGeminiApiKey() {
+      appState.geminiApiKey = "";
+      document.getElementById("gemini-api-key-input").value = "";
+      saveState();
+      showToast("APIキーを削除しました");
     }
 
     function editCurrentCustomVocab() {
