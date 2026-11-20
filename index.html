@@ -1982,6 +1982,66 @@
         document.getElementById("custom-input-ex-ja").value = editItem.exampleJa || "";
       } else {
         titleEl.textContent = "マイ単語を登録";
+        editIdEl.value = "";
+        document.getElementById("custom-vocab-form").reset();
+      }
+      modal.classList.remove("hidden");
+    }
+
+    function closeCustomVocabModal() {
+      playSoundEffect("tap");
+      document.getElementById("custom-vocab-modal").classList.add("hidden");
+    }
+
+    function saveCustomVocab(event) {
+      event.preventDefault();
+      const editId = document.getElementById("custom-edit-id").value;
+      const word = document.getElementById("custom-input-word").value.trim();
+      const pos = document.getElementById("custom-input-pos").value;
+      const meaning = document.getElementById("custom-input-meaning").value.trim();
+      const coreImage = document.getElementById("custom-input-core").value.trim() || `「${word}」の情景を頭に浮かべて記憶しよう！`;
+      const exampleEn = document.getElementById("custom-input-ex-en").value.trim() || `I learned how to use "${word}" today.`;
+      const exampleJa = document.getElementById("custom-input-ex-ja").value.trim() || `今日「${word}」の使い方を学んだ。`;
+      const svgType = inferSvgTypeFromKeyword(word, meaning, coreImage);
+
+      if (!word || !meaning) return;
+
+      if (editId) {
+        const target = LEARNING_DATA.custom.vocab.find(v => v.id === editId);
+        if (target) {
+          target.word = word;
+          target.pos = pos;
+          target.meaning = meaning;
+          target.coreImage = coreImage;
+          target.exampleEn = exampleEn;
+          target.exampleJa = exampleJa;
+          target.svgType = svgType;
+        }
+        showToast(`✏️ 「${word}」を更新しました`);
+      } else {
+        const newItem = {
+          id: "cu_" + Date.now(),
+          word,
+          phonetic: "",
+          pos,
+          meaning,
+          coreImage,
+          exampleEn,
+          exampleJa,
+          svgType
+        };
+        LEARNING_DATA.custom.vocab.push(newItem);
+        appState.currentCourse = "custom";
+        appState.vocabIndex.custom = LEARNING_DATA.custom.vocab.length - 1;
+        addXP(5, `マイ単語「${word}」を登録！`);
+      }
+
+      syncCustomCourseDerivedData();
+      saveState();
+      closeCustomVocabModal();
+      switchCourse("custom");
+    }
+
     // Gemini Image API による単語専用情景イラスト生成（マルチモデル自動フォールバック対応）
     async function callGeminiImageWithFallback(apiKey, prompt) {
       const models = [
