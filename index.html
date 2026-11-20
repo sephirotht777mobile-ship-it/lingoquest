@@ -337,12 +337,18 @@
           <p>2. 「APIキーを作成（Create API key）」を押してコピーし、上の欄に貼り付けて保存します。</p>
         </div>
 
+        <!-- API接続テスト結果表示エリア -->
+        <div id="api-test-result" class="hidden rounded-2xl p-3 text-xs font-bold border"></div>
+
         <div class="flex gap-2 pt-1">
           <button type="button" onclick="clearGeminiApiKey()" class="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition">
             削除
           </button>
+          <button type="button" onclick="testGeminiApiKeyConnection()" class="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs transition">
+            🔌 接続テスト
+          </button>
           <button type="button" onclick="saveGeminiApiKey()" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-700 hover:to-cyan-700 text-white font-extrabold text-xs shadow-md transition">
-            保存してAI画像生成を有効化
+            保存して生成する
           </button>
         </div>
       </div>
@@ -1976,80 +1982,64 @@
         document.getElementById("custom-input-ex-ja").value = editItem.exampleJa || "";
       } else {
         titleEl.textContent = "マイ単語を登録";
-        editIdEl.value = "";
-        document.getElementById("custom-vocab-form").reset();
-      }
-      modal.classList.remove("hidden");
-    }
+    // Gemini Image API による単語専用情景イラスト生成（マルチモデル自動フォールバック対応）
+    async function callGeminiImageWithFallback(apiKey, prompt) {
+      const models = [
+        "gemini-3.1-flash-lite-image",
+        "gemini-3.1-flash-image",
+        "gemini-2.5-flash-image",
+        "gemini-2.0-flash-exp-image-generation"
+      ];
+      let lastErrorMsg = "通信エラーが発生しました";
 
-    function closeCustomVocabModal() {
-      playSoundEffect("tap");
-      document.getElementById("custom-vocab-modal").classList.add("hidden");
-    }
-
-    function saveCustomVocab(event) {
-      event.preventDefault();
-      const editId = document.getElementById("custom-edit-id").value;
-      const word = document.getElementById("custom-input-word").value.trim();
-      const pos = document.getElementById("custom-input-pos").value;
-      const meaning = document.getElementById("custom-input-meaning").value.trim();
-      const coreImage = document.getElementById("custom-input-core").value.trim() || `「${word}（${meaning}）」のコアイメージを頭の中で思い描いて発音しよう！`;
-      const exampleEn = document.getElementById("custom-input-ex-en").value.trim() || `We should learn how to use "${word}" naturally.`;
-      const exampleJa = document.getElementById("custom-input-ex-ja").value.trim() || `私たちは「${word}（${meaning}）」を自然に使えるようになるべきだ。`;
-
-      if (!word || !meaning) return;
-
-      const autoSvgType = inferSvgTypeFromKeyword(word, meaning, coreImage);
-
-      if (editId) {
-        const idx = LEARNING_DATA.custom.vocab.findIndex(v => v.id === editId);
-        if (idx !== -1) {
-          LEARNING_DATA.custom.vocab[idx] = {
-            ...LEARNING_DATA.custom.vocab[idx],
-            word,
-            pos,
-            meaning,
-            coreImage,
-            exampleEn,
-            exampleJa,
-            svgType: autoSvgType
+      for (const model of models) {
+        try {
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+          const payload = {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseModalities: ["TEXT", "IMAGE"] }
           };
+
+          const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            lastErrorMsg = result?.error?.message || `HTTP ${response.status} (${model})`;
+            continue;
+          }
+
+          const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData && p.inlineData.data);
+          if (part) {
+            const mime = part.inlineData.mimeType || "image/png";
+            return `data:${mime};base64,${part.inlineData.data}`;
+          }
+          lastErrorMsg = `${model} から画像データが返されませんでした`;
+        } catch (err) {
+          lastErrorMsg = err?.message || "ネットワークエラー";
         }
-        showToast(`✏️ 「${word}」を更新しました`);
-      } else {
-        const newItem = {
-          id: `cu_${Date.now()}`,
-          word,
-          phonetic: "マイ単語帳",
-          pos,
-          meaning,
-          coreImage,
-          exampleEn,
-          exampleJa,
-          svgType: autoSvgType
-        };
-        LEARNING_DATA.custom.vocab.unshift(newItem);
-        appState.vocabIndex.custom = 0;
-        addXP(5, `マイ単語「${word}」を登録！`);
       }
 
-      syncCustomCourseDerivedData();
-      saveState();
-      closeCustomVocabModal();
-      switchCourse("custom");
-
-      // 新規登録時は自動でAI情景イラストもバックグラウンド生成
-      if (!editId) {
-        generateAIImageForCurrentVocab(true);
-      }
+      throw new Error(lastErrorMsg);
     }
 
-    // Gemini Image API による単語専用情景イラスト生成
     async function generateAIImageForCurrentVocab(isSilent = false) {
       const course = LEARNING_DATA[appState.currentCourse];
       const idx = appState.vocabIndex[appState.currentCourse] || 0;
       const item = course?.vocab?.[idx];
       if (!item) return;
+
+      const apiKey = (appState.geminiApiKey || "").trim();
+      if (!apiKey && location.protocol !== "about:" && !location.hostname.includes("googleusercontent")) {
+        if (!isSilent) {
+          showToast("🔑 右上の鍵アイコンからGemini APIキーを設定してください");
+          openApiKeyModal();
+        }
+        return;
+      }
 
       const loadingEl = document.getElementById("ai-img-loading");
       if (loadingEl) loadingEl.classList.remove("hidden");
@@ -2057,30 +2047,8 @@
       const prompt = `A realistic, cinematic editorial photograph (NO text, NO letters, NO watermarks) depicting a real-life everyday scene that clearly conveys the meaning of "${item.word}" (${item.meaning}) and this memory concept: "${item.coreImage}". Natural daylight, rich textures, realistic depth of field, high-resolution educational photography.`;
 
       try {
-        const apiKey = (appState.geminiApiKey || "").trim();
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent?key=${apiKey}`;
-        const payload = {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ["TEXT", "IMAGE"] }
-        };
-
-        let response = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          response = await fetch(apiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          if (response.ok) break;
-          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-        }
-
-        if (!response || !response.ok) throw new Error("Image API error");
-        const result = await response.json();
-        const base64Data = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-        if (!base64Data) throw new Error("No image returned");
-
-        item.customImageUrl = `data:image/png;base64,${base64Data}`;
+        const imageDataUrl = await callGeminiImageWithFallback(apiKey, prompt);
+        item.customImageUrl = imageDataUrl;
         if (!appState.savedVocabImages) appState.savedVocabImages = {};
         appState.savedVocabImages[item.id] = item.customImageUrl;
         saveState();
@@ -2091,15 +2059,51 @@
         }
       } catch (err) {
         if (!isSilent) {
-          if (!appState.geminiApiKey) {
-            showToast("🔑 右上の鍵アイコンから無料のGemini APIキーを設定するとAI画像生成が使えます！");
-            openApiKeyModal();
-          } else {
-            showToast("AI画像生成に接続できませんでした。APIキーや通信環境を確認してください。");
-          }
+          const shortReason = (err?.message || "").slice(0, 75);
+          showToast(`⚠️ 生成失敗: ${shortReason}`, "bg-rose-600 text-white");
         }
       } finally {
         if (loadingEl) loadingEl.classList.add("hidden");
+      }
+    }
+
+    async function testGeminiApiKeyConnection() {
+      playSoundEffect("tap");
+      const val = (document.getElementById("gemini-api-key-input").value || "").trim();
+      const box = document.getElementById("api-test-result");
+      if (!val) {
+        box.className = "rounded-2xl p-3 text-xs font-bold border bg-rose-50 border-rose-200 text-rose-700";
+        box.textContent = "❌ APIキーを入力してからテストを押してください。";
+        box.classList.remove("hidden");
+        return;
+      }
+
+      box.className = "rounded-2xl p-3 text-xs font-bold border bg-slate-50 border-slate-200 text-slate-700";
+      box.textContent = "⏳ Google Gemini API と画像生成モデルの利用可否を確認中...";
+      box.classList.remove("hidden");
+
+      try {
+        // 1. まず基本テキストモデルでAPIキー自体の有効性を確認
+        const checkUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(val)}`;
+        const res = await fetch(checkUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: "Hi" }] }] })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error?.message || `APIキーエラー (HTTP ${res.status})`);
+        }
+
+        // 2. 続いて画像生成モデルが使えるかテスト
+        await callGeminiImageWithFallback(val, "A simple bright red apple on a clean wooden table, realistic photo");
+        appState.geminiApiKey = val;
+        saveState();
+        box.className = "rounded-2xl p-3 text-xs font-bold border bg-emerald-50 border-emerald-200 text-emerald-800";
+        box.textContent = "✅ 接続成功！このAPIキーでAI情景イラスト生成が利用可能です。";
+      } catch (err) {
+        box.className = "rounded-2xl p-3 text-xs font-bold border bg-amber-50 border-amber-200 text-amber-900 leading-relaxed";
+        box.innerHTML = `⚠️ 詳細ステータス：<br><span class="font-mono text-[11px] break-all">${err.message}</span><br><span class="text-[11px] text-slate-600 mt-1 block">※「quota / limit: 0 / billing」と表示される場合、Google AI Studio の無料枠では画像生成モデルが制限されているため、Google Cloudの従量課金(Tier 1)を有効化すると動作します。</span>`;
       }
     }
 
@@ -2107,6 +2111,8 @@
       playSoundEffect("tap");
       const input = document.getElementById("gemini-api-key-input");
       if (input) input.value = appState.geminiApiKey || "";
+      const box = document.getElementById("api-test-result");
+      if (box) box.classList.add("hidden");
       document.getElementById("api-key-modal").classList.remove("hidden");
     }
 
